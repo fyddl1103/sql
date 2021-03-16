@@ -56,3 +56,67 @@ WITH login_stats AS (
 )
 SELECT *
   FROM login_stats;
+
+-- 11.5 사용자의 생일을 계산하는 쿼리
+-- 11.6 성별과 연령으로 연령별 구분을 계산하는 쿼리
+-- 11.7 연령별 구분의 사람 수 계산하는 쿼리
+WITH mst_date AS (
+	SELECT *
+		 , CAST('20210316' AS integer) AS std_date
+		 , CAST(replace(birth_date,'-','') AS integer) AS int_date
+	  FROM mst_users
+)
+, calc_age AS (
+	SELECT T1.*
+	      ,floor((std_date - int_date) / 10000) AS age
+	  FROM mst_date T1
+)
+, age_sex_cate AS (
+	SELECT user_id
+	     , sex
+	     , age
+	     , CONCAT(CASE WHEN age >= 20 THEN sex ELSE '' END ,
+				  CASE WHEN age BETWEEN 4 AND 12 THEN 'C'
+				       WHEN age BETWEEN 13 AND 19 THEN 'T'
+				  	   WHEN age BETWEEN 20 AND 34 THEN '1'
+				       WHEN age BETWEEN 35 AND 49 THEN '2'
+				       WHEN age >= 50 THEN '3' ELSE '' END) AS  category
+	  FROM calc_age
+)	SELECT category
+         , COUNT(1) AS cate_num 
+	  FROM age_sex_cate
+	 GROUP BY category
+	 
+-- 11.8 연령별 구분과 카테고리를 집계하는 쿼리
+WITH mst_date AS (
+	SELECT *
+		 , CAST('20210316' AS integer) AS std_date
+		 , CAST(replace(birth_date,'-','') AS integer) AS int_date
+	  FROM mst_users
+)
+, calc_age AS (
+	SELECT T1.*
+	      ,floor((std_date - int_date) / 10000) AS age
+	  FROM mst_date T1
+)
+, age_sex_cate AS (
+	SELECT user_id
+	     , sex
+	     , age
+	     , CONCAT(CASE WHEN age >= 20 THEN sex ELSE '' END ,
+				  CASE WHEN age BETWEEN 4 AND 12 THEN 'C'
+				       WHEN age BETWEEN 13 AND 19 THEN 'T'
+				  	   WHEN age BETWEEN 20 AND 34 THEN '1'
+				       WHEN age BETWEEN 35 AND 49 THEN '2'
+				       WHEN age >= 50 THEN '3' ELSE '' END) AS  category
+	  FROM calc_age
+)
+SELECT T1.category AS product_cate
+     , T2.category AS user_cate
+	 , COUNT(1) AS purchase_count
+  FROM action_log AS T1 JOIN
+       age_sex_cate AS T2
+	   ON T1.user_id = T2.user_id
+  WHERE T1.action = 'purchase'
+ GROUP BY T1.category, T2. category
+	   
