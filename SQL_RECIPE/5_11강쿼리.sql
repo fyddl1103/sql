@@ -120,3 +120,25 @@ SELECT T1.category AS product_cate
   WHERE T1.action = 'purchase'
  GROUP BY T1.category, T2. category
 	   
+-- 11.9 한 주에 며칠 사용되었는지 집계하는 쿼리
+WITH action_log_with_dt AS (
+	SELECT *
+		 ,substr(stamp,1,10) AS dt
+	  FROM action_log
+), action_day_count_per_user AS (
+	SELECT user_id 
+	      ,COUNT(distinct dt) AS action_day_count 
+	  FROM action_log_with_dt -- 1주에 대한 조건 걸기
+    GROUP BY user_id
+) 
+SELECT action_day_count,
+       COUNT(DISTINCT user_id) AS user_cnt,
+-- 11.10 구성비/구성비누계 산출
+		100.0 * COUNT(DISTINCT user_id) / SUM(COUNT(DISTINCT user_id)) OVER() AS compos_ratio, -- 구성비
+		100.0 * SUM(COUNT(DISTINCT user_id)) OVER(ORDER BY action_day_count 
+							ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) / 
+				SUM(COUNT(DISTINCT user_id)) OVER() AS cum_ratio -- 구성비누계
+ FROM action_day_count_per_user
+GROUP BY action_day_count;
+
+
