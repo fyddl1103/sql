@@ -141,4 +141,33 @@ SELECT action_day_count,
  FROM action_day_count_per_user
 GROUP BY action_day_count;
 
+-- 11.11/12 사용자들의 액션 플래그를 집게하는 쿼리
+-- CUBE() ; 모든 조합에 대한 수 집계
+WITH user_action_flag AS (
+	-- 사용자가 액션했으면 1, 안했으면 0으로 플래그 붙이기
+	SELECT user_id
+		 , SIGN(SUM(CASE WHEN action='purchase' THEN 1 ELSE 0 END)) AS has_purchase
+		 , SIGN(SUM(CASE WHEN action='review' THEN 1 ELSE 0 END)) AS has_review
+		 , SIGN(SUM(CASE WHEN action='favorite' THEN 1 ELSE 0 END)) AS has_favorite
+	  FROM action_log
+	GROUP BY user_id
+), action_venn_diagram AS (
+	-- CUBE를 사용해서 모든 액션 조합 구하기
+	SELECT has_purchase
+	     , has_review
+	     , has_favorite
+	     , COUNT(1) AS users
+	  FROM user_action_flag
+	GROUP BY CUBE(has_purchase
+				 , has_review
+				 , has_favorite)	
+)
+-- 11.15 벤 다이어그램을 만들기 위해 데이터 가공하는 쿼리
+SELECT CASE has_purchase WHEN 1 THEN 'purchase' WHEN 0 THEN 'not purchase' ELSE 'any' END AS has_purchase
+     , CASE has_review WHEN 1 THEN 'review' WHEN 0 THEN 'not review' ELSE 'any' END AS has_review
+	 , CASE has_favorite WHEN 1 THEN 'favorite' WHEN 0 THEN 'not favorite' ELSE 'any' END AS has_favorite
+	 , users
+	 -- 모든 액션이 null인 사용자 수  = 전체 사용자 수
+	 , ROUND(100.0 * users / NULLIF(SUM(CASE WHEN has_purchase IS NULL AND has_review IS NULL AND has_favorite IS NULL THEN users ELSE 0 END) OVER(), 0), 2) AS ratio
+  FROM action_venn_diagram;
 
