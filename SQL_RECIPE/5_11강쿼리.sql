@@ -171,3 +171,264 @@ SELECT CASE has_purchase WHEN 1 THEN 'purchase' WHEN 0 THEN 'not purchase' ELSE 
 	 , ROUND(100.0 * users / NULLIF(SUM(CASE WHEN has_purchase IS NULL AND has_review IS NULL AND has_favorite IS NULL THEN users ELSE 0 END) OVER(), 0), 2) AS ratio
   FROM action_venn_diagram;
 
+-- 11.16 구매액이 많은 순으로 오더링 & 사용자그룹을 10등분함
+-- NTILE()
+WITH user_purchase_amount AS (
+  SELECT user_id
+		,SUM(amount) AS purchase_amount
+	FROM action_log
+  WHERE action = 'purchase'
+  GROUP BY user_id
+)
+, users_with_decile AS (
+	SELECT user_id
+	     , purchase_amount
+	     , NTILE(10) OVER(ORDER BY purchase_amount DESC) AS decile
+	  FROM user_purchase_amount
+)
+-- 11.17 10분할한 Decile들을 집계하는 쿼리
+, decile_with_amonut AS (
+	SELECT decile
+	     , SUM(purchase_amount) AS amount
+	     , ROUND(AVG(purchase_amount)) AS avg_amount
+	 	 , SUM(SUM(purchase_amount)) OVER (ORDER BY decile) AS cum_amount
+	     , SUM(SUM(purchase_amount)) OVER () AS total_amount
+	  FROM users_with_decile
+	GROUP BY decile
+)
+ -- 11.18 구매액이 많은 순서대로 구성비/구성비누계 계산
+ SELECT decile
+       ,amount
+	   ,avg_amount
+	   ,ROUND(amount / total_amount * 100.0, 2) AS total_ratio -- 구성비
+	   ,ROUND(cum_amount / total_amount * 100.0, 2) AS cum_ratio -- 구성비누계
+   FROM decile_with_amonut;
+  
+  
+-- 11.19 RFM 집계하는 쿼리
+WITH purchase_log AS (
+	SELECT user_id
+	     , amount
+	     , substring(stamp,1,10) AS dt
+	  FROM action_log
+	 WHERE action = 'purchase' 
+)
+, user_rfm AS (
+  SELECT user_id
+	   , MAX(dt) AS recent_date
+	   , TO_DATE('20200201','YYYYMMDD') - MAX(dt::date) AS recency
+	   , COUNT(dt) AS frequency
+	   , SUM(amount) AS monetary
+    FROM purchase_log
+	GROUP BY user_id
+)
+SELECT * FROM user_rfm;
+  
+-- 11.19 RFM 집계하는 쿼리
+WITH purchase_log AS (
+	SELECT user_id
+	     , amount
+	     , substring(stamp,1,10) AS dt
+	  FROM action_log
+	 WHERE action = 'purchase' 
+)
+, user_rfm AS (
+  SELECT user_id
+	   , MAX(dt) AS recent_date
+	   , TO_DATE('20200201','YYYYMMDD') - MAX(dt::date) AS recency
+	   , COUNT(dt) AS frequency
+	   , SUM(amount) AS monetary
+    FROM purchase_log
+	GROUP BY user_id
+)
+-- 11.20 사용자들의 RFM 랭크를 계산하는 쿼리
+, user_rfm_rank AS (
+  SELECT user_id
+	   , recent_date
+	   , recency
+	   , frequency
+	   , monetary
+	   , CASE WHEN recency < 14 THEN 5
+			  WHEN recency < 28 THEN 4
+			  WHEN recency < 60 THEN 3
+	 		  WHEN recency < 90 THEN 2
+			  ELSE 1 END AS r
+	   , CASE WHEN frequency >= 20 THEN 5
+			  WHEN frequency >= 10 THEN 4
+			  WHEN frequency >= 5 THEN 3
+	 		  WHEN frequency >= 2 THEN 2
+			  ELSE 1 END AS f
+	   , CASE WHEN monetary >= 300 THEN 5
+			  WHEN monetary >= 100 THEN 4
+			  WHEN monetary >= 30 THEN 3
+	 		  WHEN monetary >= 5 THEN 2
+			  ELSE 1 END AS m
+	FROM user_rfm
+)
+-- 11.21 각 그룹의 사람 수를 확인하는 쿼리
+, mst_rfm_index AS (
+			  SELECT 1 AS rfm_idx
+	UNION ALL SELECT 2 AS rfm_idx
+	UNION ALL SELECT 3 AS rfm_idx
+	UNION ALL SELECT 4 AS rfm_idx
+	UNION ALL SELECT 5 AS rfm_idx
+)
+, rfm_flag AS (
+	SELECT m.rfm_idx
+	     , CASE WHEN r.r = m.rfm_idx THEN 1 ELSE 0 END AS r_flag
+		 , CASE WHEN r.f = m.rfm_idx THEN 1 ELSE 0 END AS f_flag
+		 , CASE WHEN r.m = m.rfm_idx THEN 1 ELSE 0 END AS m_flag
+	  FROM mst_rfm_index AS m 
+	     CROSS JOIN
+	       user_rfm_rank AS r
+)
+SELECT rfm_idx
+     , SUM(r_flag) AS r
+	 , SUM(f_flag) AS f
+	 , SUM(m_flag) AS m
+  FROM rfm_flag
+ GROUP BY rfm_idx
+ ORDER BY rfm_idx DESC;
+ 
+-- 11.22 통합 랭크를 계산하는 쿼리
+WITH purchase_log AS (
+	SELECT user_id
+	     , amount
+	     , substring(stamp,1,10) AS dt
+	  FROM action_log
+	 WHERE action = 'purchase' 
+)
+, user_rfm AS (
+  SELECT user_id
+	   , MAX(dt) AS recent_date
+	   , TO_DATE('20200201','YYYYMMDD') - MAX(dt::date) AS recency
+	   , COUNT(dt) AS frequency
+	   , SUM(amount) AS monetary
+    FROM purchase_log
+	GROUP BY user_id
+)
+, user_rfm_rank AS (
+  SELECT user_id
+	   , recent_date
+	   , recency
+	   , frequency
+	   , monetary
+	   , CASE WHEN recency < 14 THEN 5
+			  WHEN recency < 28 THEN 4
+			  WHEN recency < 60 THEN 3
+	 		  WHEN recency < 90 THEN 2
+			  ELSE 1 END AS r
+	   , CASE WHEN frequency >= 20 THEN 5
+			  WHEN frequency >= 10 THEN 4
+			  WHEN frequency >= 5 THEN 3
+	 		  WHEN frequency >= 2 THEN 2
+			  ELSE 1 END AS f
+	   , CASE WHEN monetary >= 300 THEN 5
+			  WHEN monetary >= 100 THEN 4
+			  WHEN monetary >= 30 THEN 3
+	 		  WHEN monetary >= 5 THEN 2
+			  ELSE 1 END AS m
+	FROM user_rfm
+)
+SELECT r + f + m AS total_rank
+     , r , f , m
+	 , COUNT(1) AS count
+  FROM user_rfm_rank
+ GROUP BY r , f , m
+ ORDER BY total_rank DESC;
+ 
+ -- 11.23 종합 랭크별로 사용자 수 집계
+WITH purchase_log AS (
+	SELECT user_id
+	     , amount
+	     , substring(stamp,1,10) AS dt
+	  FROM action_log
+	 WHERE action = 'purchase' 
+)
+, user_rfm AS (
+  SELECT user_id
+	   , MAX(dt) AS recent_date
+	   , TO_DATE('20200201','YYYYMMDD') - MAX(dt::date) AS recency
+	   , COUNT(dt) AS frequency
+	   , SUM(amount) AS monetary
+    FROM purchase_log
+	GROUP BY user_id
+)
+, user_rfm_rank AS (
+  SELECT user_id
+	   , recent_date
+	   , recency
+	   , frequency
+	   , monetary
+	   , CASE WHEN recency < 14 THEN 5
+			  WHEN recency < 28 THEN 4
+			  WHEN recency < 60 THEN 3
+	 		  WHEN recency < 90 THEN 2
+			  ELSE 1 END AS r
+	   , CASE WHEN frequency >= 20 THEN 5
+			  WHEN frequency >= 10 THEN 4
+			  WHEN frequency >= 5 THEN 3
+	 		  WHEN frequency >= 2 THEN 2
+			  ELSE 1 END AS f
+	   , CASE WHEN monetary >= 300 THEN 5
+			  WHEN monetary >= 100 THEN 4
+			  WHEN monetary >= 30 THEN 3
+	 		  WHEN monetary >= 5 THEN 2
+			  ELSE 1 END AS m
+	FROM user_rfm
+)
+SELECT r + f + m AS total_rank
+	 , COUNT(1) AS count
+  FROM user_rfm_rank
+ GROUP BY total_rank
+ ORDER BY total_rank DESC;
+ 
+-- 11.24 R과 F를 사용하여 2차원 사용자 층의 수를 집게하기
+WITH purchase_log AS (
+	SELECT user_id
+	     , amount
+	     , substring(stamp,1,10) AS dt
+	  FROM action_log
+	 WHERE action = 'purchase' 
+)
+, user_rfm AS (
+  SELECT user_id
+	   , MAX(dt) AS recent_date
+	   , TO_DATE('20200201','YYYYMMDD') - MAX(dt::date) AS recency
+	   , COUNT(dt) AS frequency
+	   , SUM(amount) AS monetary
+    FROM purchase_log
+	GROUP BY user_id
+)
+, user_rfm_rank AS (
+  SELECT user_id
+	   , recent_date
+	   , recency
+	   , frequency
+	   , monetary
+	   , CASE WHEN recency < 14 THEN 5
+			  WHEN recency < 28 THEN 4
+			  WHEN recency < 60 THEN 3
+	 		  WHEN recency < 90 THEN 2
+			  ELSE 1 END AS r
+	   , CASE WHEN frequency >= 20 THEN 5
+			  WHEN frequency >= 10 THEN 4
+			  WHEN frequency >= 5 THEN 3
+	 		  WHEN frequency >= 2 THEN 2
+			  ELSE 1 END AS f
+	   , CASE WHEN monetary >= 300 THEN 5
+			  WHEN monetary >= 100 THEN 4
+			  WHEN monetary >= 30 THEN 3
+	 		  WHEN monetary >= 5 THEN 2
+			  ELSE 1 END AS m
+	FROM user_rfm
+)
+SELECT CONCAT('r_', r) AS r_rank
+     , COUNT(CASE WHEN f = 5 THEN 1 END) AS f_5
+     , COUNT(CASE WHEN f = 4 THEN 1 END) AS f_4
+     , COUNT(CASE WHEN f = 3 THEN 1 END) AS f_3	 
+     , COUNT(CASE WHEN f = 2 THEN 1 END) AS f_2
+     , COUNT(CASE WHEN f = 1 THEN 1 END) AS f_1
+  FROM user_rfm_rank
+ GROUP BY r_rank
+ ORDER BY r_rank DESC;
